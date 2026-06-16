@@ -1,0 +1,92 @@
+# ©Moksh Jain | 2026
+# compose.yml
+# Production compose — Nginx serves frontend + proxies /api/* to backend
+# For Cloudflare tunnel: docker compose -f compose.yml -f cloudflared.compose.yml up
+
+name: ${APP_NAME:-aegis-bat}
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: infra/docker/vite.prod
+      args:
+        - VITE_API_URL=${VITE_API_URL:-/api}
+        - VITE_APP_TITLE=${VITE_APP_TITLE:-aegis-bat}
+    container_name: ${APP_NAME:-aegis-bat}-nginx
+    ports:
+      - "${NGINX_HOST_PORT:-22784}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - app
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/rust.prod
+    container_name: ${APP_NAME:-aegis-bat}-backend
+    environment:
+      - DATABASE_URL=postgres://aegis-bat:${POSTGRES_PASSWORD:-aegis-bat}@postgres:5432/aegis-bat
+      - RUST_LOG=${RUST_LOG:-info}
+      - HOST=0.0.0.0
+      - PORT=3000
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-52428800}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: ${APP_NAME:-aegis-bat}-postgres
+    environment:
+      - POSTGRES_USER=aegis-bat
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-aegis-bat}
+      - POSTGRES_DB=aegis-bat
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis-bat"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    restart: unless-stopped
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  pgdata:
